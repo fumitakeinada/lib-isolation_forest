@@ -8,8 +8,11 @@ pub mod isolation_forest {
     use rand_distr::{Distribution};
     
     extern crate statrs;
-    
-    
+
+    use std::thread;
+    use std::sync::Mutex;
+    use std::sync::Arc;
+
     use std::panic;
     
     extern crate rayon;
@@ -20,7 +23,7 @@ pub mod isolation_forest {
     // 再帰処理が入るので、enumで定義
     // 途中は2分木要素、末端は葉要素として定義
     //#[derive(Debug)]
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub enum IsolationNode {
         // 2分木の枝の情報
         Decision {
@@ -219,7 +222,7 @@ pub mod isolation_forest {
 
 
         // 学習
-        pub fn fit(& mut self, x:&Array2<f64>) -> Result<(), ShapeError>{
+        pub fn fit(& mut self, x:&Array2<f64>) {
 
             // self.sample_size==0の場合は、入力データのデータ数をサンプルサイズに変更する。
             if self.sample_size == 0{
@@ -229,23 +232,46 @@ pub mod isolation_forest {
             // 深さの上限の設定
             let height_limit:u32 = (self.sample_size as f64).log2().ceil() as u32;
             let sample_size = self.sample_size;
-            let mut err_flag:bool = false;
+            
 
-            // 指定数のIsolationTreeの作成
+            // spawnによる実装
+            let x_tmp = Arc::from(x.clone()); // データは参照のみ
+            let tree_set = Arc::new(Mutex::new(vec!{}));
+
+            for _ in 0..self.n_trees {
+                let x_t = Arc::clone(&x_tmp);
+                let t_set = Arc::clone(&tree_set);
+
+                let handle = thread::spawn(move || {
+                    let data = Self::make_isotree(&x_t, sample_size, height_limit);
+                    match data {
+                        // エラーが出ないものだけでツリーを構成
+                        Ok(ret) => {t_set.lock().unwrap().push(ret);},
+                        Err(_) => {},
+                    }
+                });
+                handle.join().unwrap();
+            }
+            self.tree_set =  tree_set.lock().unwrap().to_vec();
+            
+            /*
+            // rayonによるスレッド化
             self.tree_set = (0..self.n_trees)
                 .into_par_iter()
-                .map(|_| 
+                .map(move |_|
                 {
                     let data = Self::make_isotree(&x, sample_size, height_limit);
                     match data {
-                        Ok(ret) => ret,
-                        Err(e) => panic!("ShapeError: {:?}",e),
+                        Ok(ret) => {ret},
+                        Err(e) => {
+                            panic!("ShapeError: {:?}",e);
+                        },
                     }
                 })
                 .collect();
-
-            Ok(())
+            */
         }
+
         // 行毎の長さの平均を算出
         fn get_path_length_mean(&self, row:&ArrayView1<f64>)-> f64{
             //rayonによるスレッド化
@@ -266,6 +292,8 @@ pub mod isolation_forest {
             let path_mean:f64 = sum/(path.len() as f64);
             path_mean
         }
+
+
 
         // データ毎の長さの平均を算出
         fn path_length_mean(&self, x:&Array2<f64>) -> Vec<f64>{
@@ -316,7 +344,7 @@ mod tests {
     }
 
     // 木モデルの生成
-    fn make_isotreeens(mean:f64,std_dev:f64, dim:usize) -> isolation_forest::IsolationTreeEnsemble {
+    fn make_isotree_ens(mean:f64,std_dev:f64, dim:usize) -> isolation_forest::IsolationTreeEnsemble {
         
         // 学習用データ生成
         let arr_train:Array2<f64> = make_train_data(mean, std_dev, dim);
@@ -336,7 +364,7 @@ mod tests {
         let std_dev:f64 = 1.0; // 分散
         let dim = 5; // 次元
 
-        let mut isotreeens = make_isotreeens(mean, std_dev, dim);
+        let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
 
 
         // テスト用データ（正常）
@@ -362,7 +390,7 @@ mod tests {
         let std_dev:f64 = 1.0; // 分散
         let dim = 5; // 次元
 
-        let mut isotreeens = make_isotreeens(mean, std_dev, dim);
+        let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
 
 
         // テスト用データ（異常）
