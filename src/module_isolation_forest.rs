@@ -10,10 +10,9 @@ pub mod isolation_forest {
     extern crate statrs;
 
     use std::thread;
-    use std::sync::Mutex;
-    use std::sync::Arc;
-
-    use std::panic;
+    use std::sync::{Arc, Mutex};
+    
+    // use std::panic;
     
     extern crate rayon;
     use rayon::prelude::*;
@@ -148,15 +147,17 @@ pub mod isolation_forest {
     pub struct IsolationTreeEnsemble {
         sample_size: usize,
         n_trees: usize,
-        tree_set: Vec<IsolationNode>,    
+        tree_set: Vec<IsolationNode>,
+        dim: usize, // 次元数
     }
-
+    
     impl IsolationTreeEnsemble {
         pub fn new(sample_size:usize, n_trees:usize) -> Self{
             IsolationTreeEnsemble {
                 sample_size: sample_size, 
                 n_trees:n_trees, 
-                tree_set: Vec::new(),            
+                tree_set: Vec::new(),
+                dim : 0,         
             }
         }
 
@@ -222,7 +223,8 @@ pub mod isolation_forest {
 
 
         // 学習
-        pub fn fit(& mut self, x:&Array2<f64>) {
+        pub fn fit(&mut self, x:&Array2<f64>) {
+            self.dim = x.ncols(); // Array2の列数を次元数とする。
 
             // self.sample_size==0の場合は、入力データのデータ数をサンプルサイズに変更する。
             if self.sample_size == 0{
@@ -308,8 +310,20 @@ pub mod isolation_forest {
             paths_mean
         }
 
+        // テストデータから次元数の取得
+        pub fn get_dim(&mut self) -> usize {
+            self.dim
+        }
+
         // 異常度の算出
-        pub fn anomaly_score(&mut self, x:&Array2<f64>)  -> Vec<f64> {
+        pub fn anomaly_score(&mut self, x:&Array2<f64>)  -> Result<Vec<f64>, usize> {
+
+            // 推論用データの次元数が学習用データの次元数と一致しているかどうか
+            if self.dim != x.ncols() {
+                // 一致していない場合はエラー
+                return Err(x.ncols());
+            }
+
             // 各データの深さの平均を算出し、異常値スコアを算出
             let sample_size = self.sample_size;    
             let paths_mean = self.path_length_mean(x);
@@ -319,7 +333,7 @@ pub mod isolation_forest {
                 .par_iter()
                 .map(|l| (2. as f64).powf((-1.* l)/(Self::c(sample_size) as f64)))
                 .collect();
-            anomaly_scores
+            Ok(anomaly_scores)
         }
 
     }
@@ -376,9 +390,17 @@ mod tests {
 
         // 結果表示
         // 正常データ
-        let scores_normal = isotreeens.anomaly_score(&arr_test_normal);
-        println!("{:?}", scores_normal);
-        assert_eq!(scores_normal.len(), test_normal_num);
+        
+        match isotreeens.anomaly_score(&arr_test_normal) {
+            Ok(s) => {
+                println!("Normal Tests");
+                println!("{:?}", s);
+                assert_eq!(s.len(), test_normal_num);
+            },
+            Err(_) => {}
+        }
+
+
     }
 
     // 異常データテスト
@@ -400,8 +422,55 @@ mod tests {
 
         // 結果表示
         // 異常データ
-        let scores_anomaly = isotreeens.anomaly_score(&arr_test_anomaly);
-        println!("{:?}", scores_anomaly);
-        assert_eq!(scores_anomaly.len(), test_anomaly_num);
+        match isotreeens.anomaly_score(&arr_test_anomaly) {
+            Ok(s) => {
+                println!("Anomaly Tests");
+                println!("{:?}", s);
+                assert_eq!(s.len(), test_anomaly_num);
+            },
+            Err(_) => {}
+        }
+
+    }
+
+    #[test]
+    fn get_dim_test(){
+        // データ生成
+        let mean:f64 = 0.0; // 平均
+        let std_dev:f64 = 1.0; // 分散
+        let dim = 6; // 次元
+        
+        let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
+
+        assert_eq!(isotreeens.get_dim(), dim);
+    }
+
+    #[test]
+    fn dim_err_test() {
+        // データ生成
+        let mean:f64 = 0.0; // 平均
+        let std_dev:f64 = 1.0; // 分散
+        let dim = 5; // 次元
+        
+        let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
+
+        let test_dim = 4; // エラー用次元数
+
+        // テスト用データ（次元数の不一致）
+        // 一様分布によるデータ
+        let test_anomaly_num = 40;
+        let arr_test_anomaly:Array2<f64> = Array::random((test_anomaly_num, test_dim), Uniform::new(-4.0, 4.0));
+
+        assert_eq!(isotreeens.get_dim(), dim);
+        // 結果表示
+        // 異常データ
+        match isotreeens.anomaly_score(&arr_test_anomaly) {
+            Ok(_) => {
+            },
+            Err(dim_size) => {
+                println!("Training data dim size:{:?}, Test data dim size:{:?}", dim, dim_size);
+                assert_eq!(dim_size, test_dim);
+            }
+        }
     }
 }
