@@ -18,30 +18,29 @@ pub mod isolation_forest {
     use rayon::prelude::*;
     
     use serde::{Serialize, Deserialize};
-    // ノードデータ設定
-    // 再帰処理が入るので、enumで定義
-    // 途中は2分木要素、末端は葉要素として定義
-    //#[derive(Debug)]
+    // Node data setting
+    // It's defined the nodes as enums for the recursive processing,
+    // binary tree elements in the middle and leaf elements at the end.
     #[derive(Serialize, Deserialize, Clone)]
     pub enum IsolationNode {
-        // 2分木の枝の情報
+        // Branches information on binary tree
         Decision {
-            left : Box<IsolationNode>, // 境界よりも小さいノード
-            right: Box<IsolationNode>, // 境界以上のノード
-            split_att: usize, // 分割に選んだ変数の列番号
-            split_val: f64, // 境界値
+            left : Box<IsolationNode>, // Nodes smaller than the boundary
+            right: Box<IsolationNode>, // Nodes above the boundary
+            split_att: usize, // Column number of the variable selected in the split
+            split_val: f64, // Boundary value
         },
-        // 葉の情報
-        // 一つになるか、深さで打ち切りになるかで葉になるので、その時のデータのサイズ（行数）を記録
-        // 末端のデータ自体は必要ない
+        // Leaf information 
+        // Data size(rows number) is recorded.
+        // (Not include data.)
         Leaf {
-            size: usize, // 末端として残ったデータサイズ（行数）
+            size: usize,
         }
     }
 
-    // ノード(再帰呼び出し対応）
+    // Node
     impl IsolationNode {
-        // 枝の場合の処理
+        // For branches
         fn new_decision(
             left:Box<IsolationNode>, 
             right:Box<IsolationNode>, 
@@ -57,25 +56,25 @@ pub mod isolation_forest {
             Box::new(node)
         }
 
-        // 葉（末端）の場合の処理
+        // For leaf
         fn new_leaf(
             size:usize, 
             //data:Option<Array2<f64>>
             ) -> Box<IsolationNode>{
 
             let node = IsolationNode::Leaf {
-                size: size, // データ数
+                size: size, // data number
             };
             Box::new(node)
         }
     }
 
 
-    // アイソレーションフォレストの木の処理
+    // One tree of Isolation forest 
     #[derive(Serialize, Deserialize)]
     pub struct IsolationTree {
-        height: u32, // 深さ
-        height_limit: u32, // 深さの最大値
+        height: u32, 
+        height_limit: u32, 
     }
 
     impl IsolationTree {
@@ -84,30 +83,29 @@ pub mod isolation_forest {
             IsolationTree {height : height, height_limit : height_limit}
         }
 
-        // ndarrayを渡し、学習させる
+        // Pass the training data(Array2<f64>) and fit.
         fn fit(& mut self, x:&Array2<f64>) -> Result< Box<IsolationNode>, ShapeError>{
             
-            // データが孤立するか、指定の深さになった場合、葉を戻す。
+            // When data is isolated or at the specified depth, return the leaf.
             if x.nrows() <= 1 || self.height >= self.height_limit {
                 let node = IsolationNode::new_leaf(x.nrows());            
                 return Ok(node);
             }
             
-            // 変数の列をランダムに抽出（2分割する変数を選ぶ）
+            // Extract columns randomly.
             let mut rng = thread_rng();
             let split_att: usize = rng.gen_range(0..x.ncols());
             
-            // 列を選択
+            // Select the column.
             let col = x.column(split_att);
             let vec_col = col.t().to_vec();
 
-            // Vecで型がf64の場合の最大値、最小値選択方法
+            // Select the max value and the min value.
             let max = vec_col.iter().fold(0.0/0.0, |m, &v: &f64| v.max(m));
             let min = vec_col.iter().fold(0.0/0.0, |m, &v: &f64| v.min(m));
     
-            // 閾値を決定
+            // Determine the thresholds.
             let mut rng = thread_rng();
-
             let split_val:f64 = if min == max {
                 min
             }
@@ -115,25 +113,25 @@ pub mod isolation_forest {
                 rng.gen_range(min..max)
             };
         
-            // 行毎に対象の変数が閾値より小さいか大きいかで分割        
-            let mut x_left:Array2<f64> = Array::zeros((0,x.ncols())); //　行数0で初期化
-            let mut x_right:Array2<f64> = Array::zeros((0,x.ncols())); //　行数0で初期化
+            // Split branches.       
+            let mut x_left:Array2<f64> = Array::zeros((0,x.ncols())); //　Initialize with row number = 0
+            let mut x_right:Array2<f64> = Array::zeros((0,x.ncols())); // Initialize with row number = 0
             
-            // スレッド化検討もしくは高速な並べ替え検討
+    
             for i in x.rows(){
                 if i.to_vec()[split_att] < split_val {
-                    // 行追加
+                    // Add row on th left.
                     x_left.push_row(i)?;
                 }
                 else {
-                    // 行追加
+                    // Add row on the right.
                     x_right.push_row(i)?;
                 }
             }
             let height = self.height;
             let height_limit = self.height_limit;
 
-            // 枝を作成し、深さを1加え、分岐条件を設定し、枝を戻す。
+            // Create a branch, add 1 depth, set the branching condition, and return the branch.
             let left_node = IsolationTree::new(height + 1, height_limit).fit(&x_left)?;        
             let right_node = IsolationTree::new(height + 1, height_limit).fit(&x_right)?;
 
@@ -142,13 +140,13 @@ pub mod isolation_forest {
         }
     }
 
-    // アンサンブル学習用のツリー集合
+    // Tree set for ensemble learning
     #[derive(Serialize, Deserialize)]
     pub struct IsolationTreeEnsemble {
         sample_size: usize,
         n_trees: usize,
         tree_set: Vec<IsolationNode>,
-        dim: usize, // 次元数
+        dim: usize, // dimension number
     }
     
     impl IsolationTreeEnsemble {
@@ -174,13 +172,10 @@ pub mod isolation_forest {
             }
         }
 
-        // データを渡して長さを返す
+        // Pass the data and return length.
         fn tree_path_length(node:Box<&IsolationNode>, x:&ArrayView1<f64>)->(usize, usize){
-            // ノードを枝か葉で分ける
-
             match *node {
                 IsolationNode::Decision {left, right, split_att, split_val}=> {
-                    // 対象の変数を取り出し、閾値の大小で枝を振り分ける。
                     let direction = if x.to_vec()[*split_att] < *split_val {
                         left
                     }
@@ -222,22 +217,18 @@ pub mod isolation_forest {
         }
 
 
-        // 学習
+        // Training
         pub fn fit(&mut self, x:&Array2<f64>) {
-            self.dim = x.ncols(); // Array2の列数を次元数とする。
+            self.dim = x.ncols(); // dimension number = columns number
 
-            // self.sample_size==0の場合は、入力データのデータ数をサンプルサイズに変更する。
             if self.sample_size == 0{
                 self.sample_size = x.nrows();
             }
 
-            // 深さの上限の設定
             let height_limit:u32 = (self.sample_size as f64).log2().ceil() as u32;
             let sample_size = self.sample_size;
             
-
-            // spawnによる実装
-            let x_tmp = Arc::from(x.clone()); // データは参照のみ
+            let x_tmp = Arc::from(x.clone()); // The training data is for reference only.
             let tree_set = Arc::new(Mutex::new(vec!{}));
 
             for _ in 0..self.n_trees {
@@ -247,7 +238,7 @@ pub mod isolation_forest {
                 let handle = thread::spawn(move || {
                     let data = Self::make_isotree(&x_t, sample_size, height_limit);
                     match data {
-                        // エラーが出ないものだけでツリーを構成
+                        // Compose a tree with only error-free items
                         Ok(ret) => {t_set.lock().unwrap().push(ret);},
                         Err(_) => {},
                     }
@@ -257,7 +248,7 @@ pub mod isolation_forest {
             self.tree_set =  tree_set.lock().unwrap().to_vec();
             
             /*
-            // rayonによるスレッド化
+            // Thread on rayon
             self.tree_set = (0..self.n_trees)
                 .into_par_iter()
                 .map(move |_|
@@ -274,7 +265,7 @@ pub mod isolation_forest {
             */
         }
 
-        // 行毎の長さの平均を算出
+        // Get length mean
         fn get_path_length_mean(&self, row:&ArrayView1<f64>)-> f64{
             //rayonによるスレッド化
             let path:Vec<f64> = self.tree_set
@@ -286,7 +277,7 @@ pub mod isolation_forest {
                 })
                 .collect();
 
-            // データごとの平均値の算出
+            // mean per data
             let mut sum: f64 = 0.0;
             for j in path.iter() {
                 sum += *j as f64;
@@ -297,38 +288,34 @@ pub mod isolation_forest {
 
 
 
-        // データ毎の長さの平均を算出
+        // Length mean
         fn path_length_mean(&self, x:&Array2<f64>) -> Vec<f64>{
-            // 各データをツリーに当てはめる
-            // rayonによるスレッド化
             let x_rows: Vec<_> = x.outer_iter().collect();
-            // 各データの深さの平均の格納場所
             let paths_mean: Vec<f64> = x_rows
-                .par_windows(1) //一つずつ取り出し
+                .par_windows(1) 
                 .map(|w| self.get_path_length_mean(&w[0]))
                 .collect();
             paths_mean
         }
 
-        // テストデータから次元数の取得
+        // Get dimension number.
         pub fn get_dim(&mut self) -> usize {
             self.dim
         }
 
-        // 異常度の算出
+        // Get anomaly scores.
         pub fn anomaly_score(&mut self, x:&Array2<f64>)  -> Result<Vec<f64>, usize> {
 
-            // 推論用データの次元数が学習用データの次元数と一致しているかどうか
+            // Whether the number of dimensions matches。
             if self.dim != x.ncols() {
-                // 一致していない場合はエラー
+                // If unmatched, return error.
                 return Err(x.ncols());
             }
 
-            // 各データの深さの平均を算出し、異常値スコアを算出
+            // Get the length mean per data, and get the anomaly scores.
             let sample_size = self.sample_size;    
             let paths_mean = self.path_length_mean(x);
 
-            // rayonによるスレッド化
             let anomaly_scores:Vec<f64> = paths_mean
                 .par_iter()
                 .map(|l| (2. as f64).powf((-1.* l)/(Self::c(sample_size) as f64)))
@@ -347,50 +334,41 @@ mod tests {
     use ndarray_rand::RandomExt;
     use ndarray_rand::rand_distr::{Normal, Uniform};
     
-    // 訓練データ生成
+    // Make training data
     fn make_train_data(mean:f64, std_dev:f64, dim: usize) -> Array2<f64>{
-        // 学習用データ生成
-        // 複数の正規分布によるデータ
+        // Multiple normal distributions
         let train1:Array2<f64> = Array::random((100, dim), Normal::new(mean * 0.3 + 2.0, std_dev * 0.3).unwrap());
         let train2:Array2<f64> = Array::random((100, dim), Normal::new(mean * 0.5 - 2.0, std_dev * 0.5).unwrap());
         let arr_train = concatenate(Axis(0), &[train1.view(), train2.view()]).unwrap();
         arr_train  
     }
 
-    // 木モデルの生成
-    fn make_isotree_ens(mean:f64,std_dev:f64, dim:usize) -> isolation_forest::IsolationTreeEnsemble {
-        
-        // 学習用データ生成
+    fn make_isotree_ens(mean:f64,std_dev:f64, dim:usize) -> isolation_forest::IsolationTreeEnsemble {        
         let arr_train:Array2<f64> = make_train_data(mean, std_dev, dim);
-
-        // 学習用データによるisolation forest の作成と学習
         let mut isotreeens = isolation_forest::IsolationTreeEnsemble::new(0, 400);
         isotreeens.fit(&arr_train);
         isotreeens
     }
 
-    // 正常データテスト
+    // Normal data tests
     #[test]
     fn fit_test_normal(){
 
-        // データ生成
-        let mean:f64 = 0.0; // 平均
-        let std_dev:f64 = 1.0; // 分散
-        let dim = 5; // 次元
+        // Make normal training data
+        let mean:f64 = 0.0; // mean
+        let std_dev:f64 = 1.0; // standard deviation
+        let dim = 5; // dimension
 
         let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
 
 
-        // テスト用データ（正常）
-        // 学習用データと同じ分布によるデータ
+        // Test data (normal)
         let test_normal_num = 40;
         let test_normal1:Array2<f64> = Array::random((test_normal_num/2, dim), Normal::new(mean * 0.3 + 2.0, std_dev * 0.3).unwrap());
         let test_normal2:Array2<f64> = Array::random((test_normal_num/2, dim), Normal::new(mean * 0.5 - 2.0, std_dev * 0.5).unwrap());
         let arr_test_normal:Array2<f64> = concatenate(Axis(0), &[test_normal1.view(), test_normal2.view()]).unwrap();
 
-        // 結果表示
-        // 正常データ
-        
+    
         match isotreeens.anomaly_score(&arr_test_normal) {
             Ok(s) => {
                 println!("Normal Tests");
@@ -403,25 +381,23 @@ mod tests {
 
     }
 
-    // 異常データテスト
+    // Anomaly data test
     #[test]
     fn fit_test_anomaly(){
 
-        // データ生成
-        let mean:f64 = 0.0; // 平均
-        let std_dev:f64 = 1.0; // 分散
-        let dim = 5; // 次元
+        // Make normal training data
+        let mean:f64 = 0.0; // mean
+        let std_dev:f64 = 1.0; // standard deviation
+        let dim = 5; // dimension
 
         let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
 
 
-        // テスト用データ（異常）
-        // 一様分布によるデータ
+        // Test data (anomaly)
+        // Uniform distribution
         let test_anomaly_num = 40;
         let arr_test_anomaly:Array2<f64> = Array::random((test_anomaly_num, dim), Uniform::new(-4.0, 4.0));
 
-        // 結果表示
-        // 異常データ
         match isotreeens.anomaly_score(&arr_test_anomaly) {
             Ok(s) => {
                 println!("Anomaly Tests");
@@ -435,10 +411,10 @@ mod tests {
 
     #[test]
     fn get_dim_test(){
-        // データ生成
-        let mean:f64 = 0.0; // 平均
-        let std_dev:f64 = 1.0; // 分散
-        let dim = 6; // 次元
+        
+        let mean:f64 = 0.0;
+        let std_dev:f64 = 1.0;
+        let dim = 6; 
         
         let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
 
@@ -447,23 +423,19 @@ mod tests {
 
     #[test]
     fn dim_err_test() {
-        // データ生成
-        let mean:f64 = 0.0; // 平均
-        let std_dev:f64 = 1.0; // 分散
-        let dim = 5; // 次元
+
+        let mean:f64 = 0.0; 
+        let std_dev:f64 = 1.0;
+        let dim = 5; // Dimension number of training data
         
         let mut isotreeens = make_isotree_ens(mean, std_dev, dim);
 
-        let test_dim = 4; // エラー用次元数
+        let test_dim = 4; // Dimension number of test data 
 
-        // テスト用データ（次元数の不一致）
-        // 一様分布によるデータ
         let test_anomaly_num = 40;
         let arr_test_anomaly:Array2<f64> = Array::random((test_anomaly_num, test_dim), Uniform::new(-4.0, 4.0));
 
         assert_eq!(isotreeens.get_dim(), dim);
-        // 結果表示
-        // 異常データ
         match isotreeens.anomaly_score(&arr_test_anomaly) {
             Ok(_) => {
             },
