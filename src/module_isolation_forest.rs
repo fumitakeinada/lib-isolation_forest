@@ -228,7 +228,7 @@ pub mod isolation_forest {
             let height_limit:u32 = (self.sample_size as f64).log2().ceil() as u32;
             let sample_size = self.sample_size;
             
-            let x_tmp = Arc::from(x.clone()); // The training data is for reference only.
+            let x_tmp = Arc::new(x.clone()); // The training data is for reference only.
             let tree_set = Arc::new(Mutex::new(vec!{}));
 
             for _ in 0..self.n_trees {
