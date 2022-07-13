@@ -199,7 +199,6 @@ pub mod isolation_forest {
         }
 
         fn make_isotree(x:&Array2<f64>, sample_size:usize, height_limit:u32) -> Result<IsolationNode, ShapeError>{        
-            // 指定の件数分をランダムにデータ抽出（重複あり）
             let mut rng = thread_rng();
             let data_range = Uniform::new_inclusive(0, x.nrows() - 1);
             let data_rows: Vec<usize> = data_range.sample_iter(&mut rng).take(sample_size).collect();
@@ -209,7 +208,7 @@ pub mod isolation_forest {
                 random_data.push_row(x.row(*i))?;
             }
 
-            // 一つのIsolationTreeを作成
+            // Make one isolation tree.
             let mut isotree = IsolationTree::new(0, height_limit);
             let data_node = isotree.fit(&random_data)?;
             
@@ -267,12 +266,12 @@ pub mod isolation_forest {
 
         // Get length mean
         fn get_path_length_mean(&self, row:&ArrayView1<f64>)-> f64{
-            //rayonによるスレッド化
+            // thread on rayon
             let path:Vec<f64> = self.tree_set
                 .par_iter()
                 .map(|tree| {
                     let result = Self::tree_path_length(Box::new(tree), row);
-                    // 孤立する前に既定の深さに達した場合、調整
+                    // If default depth is reached before isolation, it is adjusted.
                     (result.0 as f64) + Self::c(result.1)            
                 })
                 .collect();
